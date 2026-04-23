@@ -1,5 +1,4 @@
 from api.main import app
-import pytest
 from fastapi.testclient import TestClient
 import fakeredis
 
@@ -37,3 +36,4 @@ def test_job_status_flow():
     api.main.r.hset(f"job:{job_id}", "status", "completed")
     res = client.get(f"/jobs/{job_id}")
     assert res.json()["status"] == "completed"
+
