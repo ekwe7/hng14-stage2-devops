@@ -8,7 +8,6 @@ on:
 
 env:
   REGISTRY: localhost:5000
-  REDIS_PASSWORD: testsecret
 
 jobs:
   lint:
@@ -19,14 +18,17 @@ jobs:
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: api/Dockerfile
+          failure-threshold: error
       - name: Lint worker/Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: worker/Dockerfile
+          failure-threshold: error
       - name: Lint frontend/Dockerfile
         uses: hadolint/hadolint-action@v3.1.0
         with:
           dockerfile: frontend/Dockerfile
+          failure-threshold: error
       - name: flake8 (Python)
         run: |
           pip install flake8
@@ -52,7 +54,7 @@ jobs:
           pip install -r api/requirements.txt
       - name: Run unit tests with coverage
         run: |
-          PYTHONPATH=. pytest api/tests/ --cov=api --cov-report=xml
+          python -m pytest api/tests/ --cov=api --cov-report=xml
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
         with:
@@ -66,7 +68,7 @@ jobs:
       - uses: actions/checkout@v4
       - name: Start local Docker registry
         run: docker run -d -p 5000:5000 --name registry registry:2
-      - name: Build and tag images
+      - name: Build and tag images (SHA + latest)
         run: |
           docker build -t $REGISTRY/api:${GITHUB_SHA} -t $REGISTRY/api:latest ./api
           docker build -t $REGISTRY/worker:${GITHUB_SHA} -t $REGISTRY/worker:latest ./worker
@@ -87,12 +89,12 @@ jobs:
           wget -qO- https://aquasecurity.github.io/trivy-repo/trivy.pub | sudo apt-key add -
           echo "deb https://aquasecurity.github.io/trivy-repo/deb generic main" | sudo tee /etc/apt/sources.list.d/trivy.list
           sudo apt update && sudo apt install -y trivy
-      - name: Scan images
+      - name: Scan images (fail on CRITICAL)
         run: |
           trivy image --severity CRITICAL --exit-code 1 $REGISTRY/api:latest
           trivy image --severity CRITICAL --exit-code 1 $REGISTRY/worker:latest
           trivy image --severity CRITICAL --exit-code 1 $REGISTRY/frontend:latest
-      - name: Upload Trivy SARIF
+      - name: Upload Trivy SARIF artifact
         uses: actions/upload-artifact@v4
         with:
           name: trivy-sarif
@@ -108,7 +110,7 @@ jobs:
           printf 'services:\n' > docker-compose.ci.yml
           printf '  redis:\n' >> docker-compose.ci.yml
           printf '    image: redis:alpine\n' >> docker-compose.ci.yml
-          printf '    command: redis-server --requirepass ${REDIS_PASSWORD:-secret}\n' >> docker-compose.ci.yml
+          printf '    command: redis-server --requirepass ${REDIS_PASSWORD}\n' >> docker-compose.ci.yml
           printf '    healthcheck:\n' >> docker-compose.ci.yml
           printf '      test: ["CMD", "redis-cli", "ping"]\n' >> docker-compose.ci.yml
           printf '      interval: 5s\n' >> docker-compose.ci.yml
@@ -120,7 +122,7 @@ jobs:
           printf '    environment:\n' >> docker-compose.ci.yml
           printf '      REDIS_HOST: redis\n' >> docker-compose.ci.yml
           printf '      REDIS_PORT: 6379\n' >> docker-compose.ci.yml
-          printf '      REDIS_PASSWORD: ${REDIS_PASSWORD:-secret}\n' >> docker-compose.ci.yml
+          printf '      REDIS_PASSWORD: ${REDIS_PASSWORD}\n' >> docker-compose.ci.yml
           printf '    depends_on:\n' >> docker-compose.ci.yml
           printf '      redis:\n' >> docker-compose.ci.yml
           printf '        condition: service_healthy\n' >> docker-compose.ci.yml
@@ -132,7 +134,7 @@ jobs:
           printf '    environment:\n' >> docker-compose.ci.yml
           printf '      REDIS_HOST: redis\n' >> docker-compose.ci.yml
           printf '      REDIS_PORT: 6379\n' >> docker-compose.ci.yml
-          printf '      REDIS_PASSWORD: ${REDIS_PASSWORD:-secret}\n' >> docker-compose.ci.yml
+          printf '      REDIS_PASSWORD: ${REDIS_PASSWORD}\n' >> docker-compose.ci.yml
           printf '    depends_on:\n' >> docker-compose.ci.yml
           printf '      redis:\n' >> docker-compose.ci.yml
           printf '        condition: service_healthy\n' >> docker-compose.ci.yml
@@ -152,27 +154,17 @@ jobs:
           printf '    driver: bridge\n' >> docker-compose.ci.yml
       - name: Start stack
         run: docker compose -f docker-compose.ci.yml up -d
-      - name: Wait for health
+      - name: Wait for services to be healthy
         run: |
           for i in {1..30}; do
             if curl -f http://localhost:8000/health && curl -f http://localhost:3000/health; then
+              echo "Services are healthy"
               break
             fi
             sleep 2
           done
-      - name: Integration test – submit job
-        run: |
-          JOB_ID=$(curl -s -X POST http://localhost:8000/jobs | jq -r .job_id)
-          for i in {1..30}; do
-            STATUS=$(curl -s http://localhost:8000/jobs/$JOB_ID | jq -r .status)
-            if [ "$STATUS" = "completed" ]; then
-              echo "Integration test passed"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "Job did not complete within timeout"
-          exit 1
+      - name: Run integration test script
+        run: ./integration_test.sh
       - name: Tear down
         if: always()
         run: docker compose -f docker-compose.ci.yml down -v
