@@ -1,3 +1,4 @@
+from api.main import app
 import pytest
 from fastapi.testclient import TestClient
 import fakeredis
@@ -6,24 +7,27 @@ import fakeredis
 import api.main
 api.main.r = fakeredis.FakeRedis(decode_responses=True)
 
-from api.main import app
 
 client = TestClient(app)
+
 
 def test_health():
     res = client.get("/health")
     assert res.status_code == 200
     assert res.json()["status"] == "ok"
 
+
 def test_create_job():
     res = client.post("/jobs")
     assert res.status_code == 200
     assert "job_id" in res.json()
 
+
 def test_get_job_not_found():
     res = client.get("/jobs/nonexistent")
     assert res.status_code == 200
     assert res.json()["error"] == "not found"
+
 
 def test_job_status_flow():
     res = client.post("/jobs")
