@@ -13,7 +13,7 @@ COPY main.py .
 RUN addgroup -S app && adduser -S app -G app
 
 # Alpine’s package manager – very reliable
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl=8.12.1-r0
 
 USER app
 
